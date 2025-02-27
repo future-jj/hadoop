@@ -62,3 +62,6 @@ report.html
 
 
 .mvn
+hadoop-common-project/hadoop-annotations/bin/pom.xml
+.gitignore
+/.metadata/

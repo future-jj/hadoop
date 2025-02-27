@@ -53,17 +53,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** 
- * A base class for file-based {@link InputFormat}.
- * 
- * <p><code>FileInputFormat</code> is the base class for all file-based 
- * <code>InputFormat</code>s. This provides a generic implementation of
- * {@link #getSplits(JobConf, int)}.
- *
- * Implementations of <code>FileInputFormat</code> can also override the
- * {@link #isSplitable(FileSystem, Path)} method to prevent input files
- * from being split-up in certain situations. Implementations that may
- * deal with non-splittable files <i>must</i> override this method, since
- * the default implementation assumes splitting is always possible.
+ * FileInputFormat 是所有基于文件（如文本文件、SequenceFile 等）的 InputFormat 的基类。
+ * 所有处理文件输入的 InputFormat 实现类
+ * （如 TextInputFormat、SequenceFileInputFormat）都应继承 FileInputFormat。
+ * FileInputFormat 提供了 getSplits 方法的默认实现，用于将输入文件划分为逻辑分片（InputSplit）。
+ * 子类可以通过覆盖 isSplitable 方法，控制某些文件是否允许分割
+ * ​场景：
+ * ​不可分割文件：如 GZIP 压缩文件，必须整体处理。
+ * ​业务需求：确保单个文件由单个 Mapper 处理（例如全局有序文件）
+ * 如果子类需要处理不可分割文件，必须覆盖 isSplitable 方法，否则会错误地分割文件。
  */
 @InterfaceAudience.Public
 @InterfaceStability.Stable
@@ -77,41 +75,54 @@ public abstract class FileInputFormat<K, V> implements InputFormat<K, V> {
     BYTES_READ
   }
 
+  //  记录输入文件的总数，供作业计数器（Job Counter）统计输入文件数量。
   public static final String NUM_INPUT_FILES =
     org.apache.hadoop.mapreduce.lib.input.FileInputFormat.NUM_INPUT_FILES;
 
+  //  控制是否递归遍历输入目录的子目录。
   public static final String INPUT_DIR_RECURSIVE = 
     org.apache.hadoop.mapreduce.lib.input.FileInputFormat.INPUT_DIR_RECURSIVE;
 
+    // 当 INPUT_DIR_RECURSIVE=false（不递归遍历）时，是否忽略输入目录中的子目录。
   public static final String INPUT_DIR_NONRECURSIVE_IGNORE_SUBDIRS =
     org.apache.hadoop.mapreduce.lib.input.FileInputFormat.INPUT_DIR_NONRECURSIVE_IGNORE_SUBDIRS;
 
-
+  // 在切割文件为分片时，避免生成过小的分片。当剩余文件大小 bytesRemaining 满足以下条件时，停止切割：
+  //  (bytesRemaining / splitSize) > SPLIT_SLOP 即，若剩余部分超过分片大小的 ​1.1 倍，则继续切割；否则将剩余部分作为一个完整分片。
   private static final double SPLIT_SLOP = 1.1;   // 10% slop
 
   private long minSplitSize = 1;
+
+  /**
+   * 隐藏文件过滤器 hiddenFileFilter
+   * 过滤掉以 _ 或 . 开头的文件或目录（如临时文件.temp 或系统文件 _SUCCESS）
+   * 在 listStatus() 方法中， 该过滤器与其他用户自定义过滤器结合，排除不需要处理的文件
+   */
   private static final PathFilter hiddenFileFilter = new PathFilter(){
       public boolean accept(Path p){
         String name = p.getName(); 
         return !name.startsWith("_") && !name.startsWith("."); 
       }
     }; 
+
   protected void setMinSplitSize(long minSplitSize) {
     this.minSplitSize = minSplitSize;
   }
 
   /**
-   * Proxy PathFilter that accepts a path only if all filters given in the
-   * constructor do. Used by the listPaths() to apply the built-in
-   * hiddenFileFilter together with a user provided one (if any).
+   * 组合多个PathFilter 仅当所有过滤器都接受路径时，路径才能被接受
+   * 设计意图：将内置过滤器（排除隐藏文件）与用户自定义过滤器相互结合使用
    */
   private static class MultiPathFilter implements PathFilter {
+    
     private List<PathFilter> filters;
 
     public MultiPathFilter(List<PathFilter> filters) {
       this.filters = filters;
     }
 
+    //  遍历所有的过滤器，若任一过滤器拒绝路径，立即返回false
+    //  所有过滤器均接受时返回false
     public boolean accept(Path path) {
       for (PathFilter filter : filters) {
         if (!filter.accept(path)) {
@@ -123,34 +134,29 @@ public abstract class FileInputFormat<K, V> implements InputFormat<K, V> {
   }
 
   /**
-   * Is the given filename splittable? Usually, true, but if the file is
-   * stream compressed, it will not be.
-   *
-   * The default implementation in <code>FileInputFormat</code> always returns
-   * true. Implementations that may deal with non-splittable files <i>must</i>
-   * override this method.
-   *
-   * <code>FileInputFormat</code> implementations can override this and return
-   * <code>false</code> to ensure that individual input files are never split-up
-   * so that {@link Mapper}s process entire files.
-   * 
-   * @param fs the file system that the file is on
-   * @param filename the file name to check
-   * @return is this file splitable?
+   * 判断文件是否可分割，默认返回true（可分割）
+   * 设计意图：允许子类覆盖此方法，处理不可分割的文件（比如压缩文件）
    */
   protected boolean isSplitable(FileSystem fs, Path filename) {
     return true;
   }
   
+  /**
+   * 为给定的InputSplit 创建一个 RecordReader 实例，用于将分片数据解析为键值对（<K, V>）
+   * 子类必须实现此方法，根据文件格式（文本, SequenceFile） 返回对应的RecordReader
+   * @param split 输入分片InputSplit，包含数据的位置和大小
+   * @param job 作业配置（JobConf）包括输入格式，压缩编码等信息
+   * @param reporter 进度报告（Reporter）用于更新任务进度
+   */
   public abstract RecordReader<K, V> getRecordReader(InputSplit split,
                                                JobConf job,
                                                Reporter reporter)
     throws IOException;
 
   /**
-   * Set a PathFilter to be applied to the input paths for the map-reduce job.
-   *
-   * @param filter the PathFilter class use for filtering the input paths.
+   * 设置一个用户自定义的 PathFilter 类，用于过滤输入路径（排除临时文件）
+   * @param conf 作业配置
+   * @param filter 用户自定义的 PathFilter
    */
   public static void setInputPathFilter(JobConf conf,
                                         Class<? extends PathFilter> filter) {
@@ -159,9 +165,9 @@ public abstract class FileInputFormat<K, V> implements InputFormat<K, V> {
   }
 
   /**
-   * Get a PathFilter instance of the filter set for the input paths.
-   *
-   * @return the PathFilter instance set for the job, NULL if none has been set.
+   * 从作业配置哪里获取用户设置的PathFilter 的实例
+   * 从流程配置中读取 FileInputFormat.PATHFILTER_CLASS 指定的类
+   *  通过反射实例化此类
    */
   public static PathFilter getInputPathFilter(JobConf conf) {
     Class<? extends PathFilter> filterClass = conf.getClass(
@@ -172,27 +178,27 @@ public abstract class FileInputFormat<K, V> implements InputFormat<K, V> {
   }
 
   /**
-   * Add files in the input path recursively into the results.
-   * @param result
-   *          The List to store all files.
-   * @param fs
-   *          The FileSystem.
-   * @param path
-   *          The input path.
-   * @param inputFilter
-   *          The input filter that can be used to filter files/dirs. 
-   * @throws IOException
+   * 递归遍历指定路径下的所有的目录和文件，将符合文件的文件添加到结构列表中
+   * @param result 用户存储符合条件的文件状态
+   * @param fs 文件系统实例
+   * @param path 当前要遍历的路径
+   * @param inputFilter 路径过滤器，决定是否包含某一个路径
+   * @throws IOException 
    */
   protected void addInputPathRecursively(List<FileStatus> result,
       FileSystem fs, Path path, PathFilter inputFilter) 
       throws IOException {
+    //  获取路径下的所有文件和子目录的状态信息（包含块位置信息）
     RemoteIterator<LocatedFileStatus> iter = fs.listLocatedStatus(path);
+    //  遍历目录项
     while (iter.hasNext()) {
       LocatedFileStatus stat = iter.next();
+      //  逐个处理目录中的每一个条目
       if (inputFilter.accept(stat.getPath())) {
         if (stat.isDirectory()) {
           addInputPathRecursively(result, fs, stat.getPath(), inputFilter);
         } else {
+          //  shrinkStatus的作用：将LocatedFileStatus（含块位置）转换为轻量级的FileStatus
           result.add(org.apache.hadoop.mapreduce.lib.input.
               FileInputFormat.shrinkStatus(stat));
         }
@@ -201,39 +207,27 @@ public abstract class FileInputFormat<K, V> implements InputFormat<K, V> {
   }
   
   /**
-   * List input directories.
-   * Subclasses may override to, e.g., select only files matching a regular
-   * expression. 
-   * 
-   * If security is enabled, this method collects
-   * delegation tokens from the input paths and adds them to the job's
-   * credentials.
-   * @param job the job to list input paths for and attach tokens to.
-   * @return array of FileStatus objects
-   * @throws IOException if zero items.
+   * 列出所有输入路径下的文件，应用过滤器，并返回文件状态数组。
    */
   protected FileStatus[] listStatus(JobConf job) throws IOException {
+    //  获取输入路径，从作业配置中读取输入路径的列表
     Path[] dirs = getInputPaths(job);
     if (dirs.length == 0) {
       throw new IOException("No input paths specified in job");
     }
-
-    // get tokens for all the required FileSystems..
+    // 获取访问HDFS文件所需要的安全令牌
     TokenCache.obtainTokensForNamenodes(job.getCredentials(), dirs, job);
     
-    // Whether we need to recursive look into the directory structure
+    //  是否递归遍历子目录，默认递归
     boolean recursive = job.getBoolean(INPUT_DIR_RECURSIVE, false);
-
-    // creates a MultiPathFilter with the hiddenFileFilter and the
-    // user provided one (if any).
     List<PathFilter> filters = new ArrayList<PathFilter>();
+
     filters.add(hiddenFileFilter);
     PathFilter jobFilter = getInputPathFilter(job);
     if (jobFilter != null) {
       filters.add(jobFilter);
     }
     PathFilter inputFilter = new MultiPathFilter(filters);
-
     FileStatus[] result;
     int numThreads = job
         .getInt(

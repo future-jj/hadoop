@@ -25,75 +25,49 @@ import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.fs.FileSystem;
 
 /** 
- * <code>InputFormat</code> describes the input-specification for a 
- * Map-Reduce job. 
+ * InputFormat 描述了一个MapReduce作业的输入规范
+ * MapReduce 框架依赖作业的 InputFormat 完成以下工作：
+ * 1. 验证作业的输入规范（例如输入路径是否存在、格式是否正确）
+ * 2. 将输入文件分割为逻辑的 InputSplit，每个 InputSplit 会被分配给一个 Mapper 处理。
+ * 3. 提供 RecordReader 实现，用于从 InputSplit 中读取数据记录，供 Mapper 处理。  
+ * 基于文件的 InputFormat（如 FileInputFormat 的子类）的默认行为是：
+ * 根据输入文件的总大小（字节数）生成逻辑 InputSplit。
+ * 输入文件的 HDFS 块大小（blockSize）是 InputSplit 的上限。
+ * 可以通过配置参数 mapreduce.input.fileinputformat.split.minsize 设置 InputSplit 的最小值。
  * 
- * <p>The Map-Reduce framework relies on the <code>InputFormat</code> of the
- * job to:<p>
- * <ol>
- *   <li>
- *   Validate the input-specification of the job. 
- *   <li>
- *   Split-up the input file(s) into logical {@link InputSplit}s, each of 
- *   which is then assigned to an individual {@link Mapper}.
- *   </li>
- *   <li>
- *   Provide the {@link RecordReader} implementation to be used to glean
- *   input records from the logical <code>InputSplit</code> for processing by 
- *   the {@link Mapper}.
- *   </li>
- * </ol>
- * 
- * <p>The default behavior of file-based {@link InputFormat}s, typically 
- * sub-classes of {@link FileInputFormat}, is to split the 
- * input into <i>logical</i> {@link InputSplit}s based on the total size, in 
- * bytes, of the input files. However, the {@link FileSystem} blocksize of  
- * the input files is treated as an upper bound for input splits. A lower bound 
- * on the split size can be set via 
- * <a href="{@docRoot}/../hadoop-mapreduce-client/hadoop-mapreduce-client-core/mapred-default.xml#mapreduce.input.fileinputformat.split.minsize">
- * mapreduce.input.fileinputformat.split.minsize</a>.</p>
- * 
- * <p>Clearly, logical splits based on input-size is insufficient for many 
- * applications since record boundaries are to be respected. In such cases, the
- * application has to also implement a {@link RecordReader} on whom lies the
- * responsibilty to respect record-boundaries and present a record-oriented
- * view of the logical <code>InputSplit</code> to the individual task.
- *
+ * ​验证输入：检查输入路径是否合法、文件是否存在等。
+ * ​逻辑分片：将输入数据划分为多个 InputSplit，每个分片由一个 Mapper 处理。
+ * ​数据读取：通过 RecordReader 将 InputSplit 转换为键值对（<K, V>），供 Mapper 处理。
  * @see InputSplit
  * @see RecordReader
  * @see JobClient
  * @see FileInputFormat
  */
-@InterfaceAudience.Public
-@InterfaceStability.Stable
+@InterfaceAudience.Public //  表示该接口是公开的，可供开发者使用
+@InterfaceStability.Stable  //  表示该接口是稳定的，后续版本不会修改或者删除
 public interface InputFormat<K, V> {
 
   /** 
-   * Logically split the set of input files for the job.  
+   * 对作业的输入文件进行逻辑分片。
+   * 每个 InputSplit 会被分配给一个 Mapper 处理。
+   * 分片是逻辑上的，不会物理切割文件。例如，一个分片可以是 <文件路径, 起始偏移量, 长度>。
    * 
-   * <p>Each {@link InputSplit} is then assigned to an individual {@link Mapper}
-   * for processing.</p>
-   *
-   * <p><i>Note</i>: The split is a <i>logical</i> split of the inputs and the
-   * input files are not physically split into chunks. For e.g. a split could
-   * be <i>&lt;input-file-path, start, offset&gt;</i> tuple.
-   * 
-   * @param job job configuration.
-   * @param numSplits the desired number of splits, a hint.
-   * @return an array of {@link InputSplit}s for the job.
+   * @param job 作业配置信息（如输入路径、文件格式等）。
+   * @param numSplits  期望的分片数量（仅为建议值，实际分片数可能不同）。
+   * @return 返回 InputSplit 数组，表示所有分片。
    */
   InputSplit[] getSplits(JobConf job, int numSplits) throws IOException;
 
   /** 
-   * Get the {@link RecordReader} for the given {@link InputSplit}.
+   * 为给定的 InputSplit 创建 RecordReader。
    *
-   * <p>It is the responsibility of the <code>RecordReader</code> to respect
-   * record boundaries while processing the logical split to present a 
-   * record-oriented view to the individual task.</p>
+   * RecordReader 的责任是从逻辑分片中读取数据，并正确处理记录边界，
+   * 为 Mapper 提供按记录处理的数据视图。
    * 
-   * @param split the {@link InputSplit}
-   * @param job the job that this split belongs to
-   * @return a {@link RecordReader}
+   * @param split  对应的 InputSplit。
+   * @param job 作业配置信息
+   * @param reporter 用于报告任务进度的对象（如进度百分比）。
+   * @return 回 RecordReader 实例，用于读取分片中的数据。
    */
   RecordReader<K, V> getRecordReader(InputSplit split,
                                      JobConf job, 
