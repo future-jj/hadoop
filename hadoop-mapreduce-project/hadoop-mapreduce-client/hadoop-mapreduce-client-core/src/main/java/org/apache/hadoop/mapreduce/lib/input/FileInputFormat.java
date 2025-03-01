@@ -40,7 +40,6 @@ import org.apache.hadoop.mapreduce.InputFormat;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.JobContext;
-import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.security.TokenCache;
 import org.apache.hadoop.util.Lists;
 import org.apache.hadoop.util.ReflectionUtils;
@@ -239,13 +238,10 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
     if (dirs.length == 0) {
       throw new IOException("No input paths specified in job");
     }
-
     // 在启用安全认证（如 Kerberos）的 Hadoop 集群中，访问 HDFS 需要 Delegation Token。
     TokenCache.obtainTokensForNamenodes(job.getCredentials(), dirs, job.getConfiguration());
-
     // 递归扫描控制
     boolean recursive = getInputDirRecursive(job);
-
     // 多过滤器组合
     List<PathFilter> filters = new ArrayList<>();
     filters.add(hiddenFileFilter);
@@ -254,11 +250,11 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
       filters.add(jobFilter);
     }
     PathFilter inputFilter = new MultiPathFilter(filters);
-
     List<FileStatus> result = null;
-
+    // 多线程优化
     int numThreads = job.getConfiguration().getInt(LIST_STATUS_NUM_THREADS, DEFAULT_LIST_STATUS_NUM_THREADS);
     StopWatch sw = new StopWatch().start();
+    // 线程数是1的时候进行串行执行
     if (numThreads == 1) {
       result = singleThreadedListStatus(job, dirs, inputFilter, recursive);
     } else {
@@ -266,46 +262,52 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
       try {
         LocatedFileStatusFetcher locatedFileStatusFetcher = new LocatedFileStatusFetcher(
             job.getConfiguration(), dirs, recursive, inputFilter, true);
+        // 通过 LocatedFileStatusFetcher 并发列出文件状态，提升大目录扫描效率。
         locatedFiles = locatedFileStatusFetcher.getFileStatuses();
       } catch (InterruptedException e) {
-        throw (IOException) new InterruptedIOException(
-            "Interrupted while getting file statuses")
-            .initCause(e);
+        throw (IOException) new InterruptedIOException("Interrupted while getting file statuses").initCause(e);
       }
       result = Lists.newArrayList(locatedFiles);
     }
-
     sw.stop();
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Time taken to get FileStatuses: "
-          + sw.now(TimeUnit.MILLISECONDS));
+      LOG.debug("Time taken to get FileStatuses: , {}", sw.now(TimeUnit.MILLISECONDS));
     }
-    LOG.info("Total input files to process : " + result.size());
+    LOG.info("Total input files to process : , {}", result.size());
     return result;
   }
 
+  // 方法用于单线程扫描输入路径并生成符合条件的文件列表
   private List<FileStatus> singleThreadedListStatus(JobContext job, Path[] dirs,
       PathFilter inputFilter, boolean recursive) throws IOException {
-    List<FileStatus> result = new ArrayList<FileStatus>();
-    List<IOException> errors = new ArrayList<IOException>();
+    // 符合条件的文件状态
+    List<FileStatus> result = new ArrayList<>();
+    // 扫描过程中发现的错误
+    List<IOException> errors = new ArrayList<>();
     for (int i = 0; i < dirs.length; ++i) {
       Path p = dirs[i];
+      // 根据路径的协议（如 hdfs:// 或 file://）获取对应的文件系统实例
       FileSystem fs = p.getFileSystem(job.getConfiguration());
+      // 解析路径中的通配符（如 * 或 ?），并应用 inputFilter 过滤文件，返回匹配的 FileStatus 数组。
       FileStatus[] matches = fs.globStatus(p, inputFilter);
+      // 路径不存在
       if (matches == null) {
         errors.add(new IOException("Input path does not exist: " + p));
+        // 路径存在但无匹配文件
       } else if (matches.length == 0) {
         errors.add(new IOException("Input Pattern " + p + " matches 0 files"));
       } else {
+        // 路径存在且有匹配项
         for (FileStatus globStat : matches) {
+          // 处理目录，需要进一步的遍历其中的内容
           if (globStat.isDirectory()) {
             RemoteIterator<LocatedFileStatus> iter = fs.listLocatedStatus(globStat.getPath());
+            // 使用 RemoteIterator 逐条获取目录下的文件状态，避免一次性加载大目录导致内存压力
             while (iter.hasNext()) {
               LocatedFileStatus stat = iter.next();
               if (inputFilter.accept(stat.getPath())) {
                 if (recursive && stat.isDirectory()) {
-                  addInputPathRecursively(result, fs, stat.getPath(),
-                      inputFilter);
+                  addInputPathRecursively(result, fs, stat.getPath(), inputFilter);
                 } else {
                   result.add(shrinkStatus(stat));
                 }
@@ -326,29 +328,24 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
 
   /**
    * Add files in the input path recursively into the results.
+   * 是用于递归扫描目录并将符合条件的文件添加到结构列表的核心方法
    * 
-   * @param result
-   *                    The List to store all files.
-   * @param fs
-   *                    The FileSystem.
-   * @param path
-   *                    The input path.
-   * @param inputFilter
-   *                    The input filter that can be used to filter files/dirs.
+   * @param result  存储最终符合条件的文件状态
+   * @param fs  //  文件系统的实例，（如HDFS， S3）  
+   * @param path // 当前扫描的路径
+   * @param inputFilter //  文件路径过滤器
    * @throws IOException
    */
-  protected void addInputPathRecursively(List<FileStatus> result,
-      FileSystem fs, Path path, PathFilter inputFilter)
+  protected void addInputPathRecursively(List<FileStatus> result, FileSystem fs, Path path, PathFilter inputFilter)
       throws IOException {
-    // FNFE exceptions are caught whether raised in the list call,
-    // or in the hasNext() or next() calls, where async reporting
-    // may take place.
     try {
+      //  获取目录下文件列表
       RemoteIterator<LocatedFileStatus> iter = fs.listLocatedStatus(path);
       while (iter.hasNext()) {
         LocatedFileStatus stat = iter.next();
         if (inputFilter.accept(stat.getPath())) {
           if (stat.isDirectory()) {
+            //  如果当前项时目录，递归调用自身继续扫描
             addInputPathRecursively(result, fs, stat.getPath(), inputFilter);
           } else {
             result.add(shrinkStatus(stat));
@@ -364,18 +361,12 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
   }
 
   /**
-   * The HdfsBlockLocation includes a LocatedBlock which contains messages
-   * for issuing more detailed queries to datanodes about a block, but these
-   * messages are useless during job submission currently. This method tries
-   * to exclude the LocatedBlock from HdfsBlockLocation by creating a new
-   * BlockLocation from original, reshaping the LocatedFileStatus,
-   * allowing {@link #listStatus(JobContext)} to scan more files with less
-   * memory footprint.
-   * 
+   * shrinkStatus 方法旨在优化内存使用，通过精简文件状态中的块位置信息，减少作业提交
+   * 时的内存开销
    * @see BlockLocation
    * @see org.apache.hadoop.fs.HdfsBlockLocation
-   * @param origStat The fat FileStatus.
-   * @return The FileStatus that has been shrunk.
+   * @param origStat 原始文件状态，可能包含HdfsBlockLocation
+   * @return 精简后的FileStatus, 保留必要的元数据
    */
   public static FileStatus shrinkStatus(FileStatus origStat) {
     if (origStat.isDirectory() || origStat.getLen() == 0 ||
@@ -412,41 +403,48 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
   }
 
   /**
-   * Generate the list of files and make them into FileSplits.
+   * 是核心方法，负责将输入文件划分为多个逻辑分片（InputSplit），供MapReduce任务的Mapper处理
    * 
    * @param job the job context
    * @throws IOException
    */
   public List<InputSplit> getSplits(JobContext job) throws IOException {
     StopWatch sw = new StopWatch().start();
+    //  获取分片最小尺寸
     long minSize = Math.max(getFormatMinSplitSize(), getMinSplitSize(job));
+    //  分片最大尺寸
     long maxSize = getMaxSplitSize(job);
-
-    // generate splits
-    List<InputSplit> splits = new ArrayList<InputSplit>();
+    // 存储生成的分片
+    List<InputSplit> splits = new ArrayList<>();
+    //  获取所有的输入文件的状态
     List<FileStatus> files = listStatus(job);
-
+    //  是否忽略子目录，（当不递归且配置忽略时）
     boolean ignoreDirs = !getInputDirRecursive(job)
         && job.getConfiguration().getBoolean(INPUT_DIR_NONRECURSIVE_IGNORE_SUBDIRS, false);
     for (FileStatus file : files) {
-      if (ignoreDirs && file.isDirectory()) {
+      if (ignoreDirs && file.isDirectory()) {  // 跳过目录
         continue;
       }
       Path path = file.getPath();
       long length = file.getLen();
       if (length != 0) {
+        //  获取块的位置信息
         BlockLocation[] blkLocations;
         if (file instanceof LocatedFileStatus) {
+          //  直接获取
           blkLocations = ((LocatedFileStatus) file).getBlockLocations();
         } else {
+          //  通过文件系统查询
           FileSystem fs = path.getFileSystem(job.getConfiguration());
           blkLocations = fs.getFileBlockLocations(file, 0, length);
         }
+        //  判断是否可分割
         if (isSplitable(job, path)) {
+          //  HDFS块大小
           long blockSize = file.getBlockSize();
           long splitSize = computeSplitSize(blockSize, minSize, maxSize);
-
           long bytesRemaining = length;
+          //  切割主分片
           while (((double) bytesRemaining) / splitSize > SPLIT_SLOP) {
             int blkIndex = getBlockIndex(blkLocations, length - bytesRemaining);
             splits.add(makeSplit(path, length - bytesRemaining, splitSize,
@@ -454,19 +452,20 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
                 blkLocations[blkIndex].getCachedHosts()));
             bytesRemaining -= splitSize;
           }
-
+          //  处理剩余字节
           if (bytesRemaining != 0) {
             int blkIndex = getBlockIndex(blkLocations, length - bytesRemaining);
             splits.add(makeSplit(path, length - bytesRemaining, bytesRemaining,
                 blkLocations[blkIndex].getHosts(),
                 blkLocations[blkIndex].getCachedHosts()));
           }
-        } else { // not splitable
+        } else { 
+          //  不可分割逻辑
           if (LOG.isDebugEnabled()) {
             // Log only if the file is big enough to be splitted
             if (length > Math.min(file.getBlockSize(), minSize)) {
               LOG.debug("File is not splittable so no parallelization "
-                  + "is possible: " + file.getPath());
+                  + "is possible: , {}" , file.getPath());
             }
           }
           splits.add(makeSplit(path, 0, length, blkLocations[0].getHosts(),
@@ -481,31 +480,43 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
     job.getConfiguration().setLong(NUM_INPUT_FILES, files.size());
     sw.stop();
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Total # of splits generated by getSplits: " + splits.size()
-          + ", TimeTaken: " + sw.now(TimeUnit.MILLISECONDS));
+      LOG.debug("Total # of splits generated by getSplits: {}"
+      +", TimeTaken: , {}" , splits.size(), sw.now(TimeUnit.MILLISECONDS));
     }
     return splits;
   }
 
-  protected long computeSplitSize(long blockSize, long minSize,
-      long maxSize) {
+  /**
+   * 计算文件分片大小，优先级为: minSize < splitSize < maxSize
+   * @param blockSize HDFS文件块大小（默认128MB）
+   * @param minSize 分片最小值
+   * @param maxSize 分片最大值
+   * @return
+   */
+  protected long computeSplitSize(long blockSize, long minSize, long maxSize) {
     return Math.max(minSize, Math.min(maxSize, blockSize));
   }
 
-  protected int getBlockIndex(BlockLocation[] blkLocations,
-      long offset) {
+  /**
+   * 根据文件偏移量缺点对应的HDFS块索引
+   * 在生成FileSplit时，缺点分片对应的物理块位置，优化数据本地化
+   * @param blkLocations    HDFS 文件块元数据数组，包含每个块的起始位置、长度和存储节点
+   * @param offset  需要定位的文件偏移量（字节级别）
+   * @return
+   */
+  protected int getBlockIndex(BlockLocation[] blkLocations, long offset) {
     for (int i = 0; i < blkLocations.length; i++) {
-      // is the offset inside this block?
-      if ((blkLocations[i].getOffset() <= offset) &&
-          (offset < blkLocations[i].getOffset() + blkLocations[i].getLength())) {
+      //  blkLocations[i].getOffset() 块的起始位置
+      //  blkLocations[i].getLength() 块的长度
+      if ((blkLocations[i].getOffset() <= offset) 
+          && (offset < blkLocations[i].getOffset() + blkLocations[i].getLength())) {
         return i;
       }
     }
     BlockLocation last = blkLocations[blkLocations.length - 1];
     long fileLength = last.getOffset() + last.getLength() - 1;
     throw new IllegalArgumentException("Offset " + offset +
-        " is outside of file (0.." +
-        fileLength + ")");
+        " is outside of file (0.." + fileLength + ")");
   }
 
   /**
@@ -530,8 +541,7 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
    * @param commaSeparatedPaths Comma separated paths to be added to
    *                            the list of inputs for the map-reduce job.
    */
-  public static void addInputPaths(Job job,
-      String commaSeparatedPaths) throws IOException {
+  public static void addInputPaths(Job job, String commaSeparatedPaths) throws IOException {
     for (String str : getPathStrings(commaSeparatedPaths)) {
       addInputPath(job, new Path(str));
     }
@@ -545,8 +555,7 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
    * @param inputPaths the {@link Path}s of the input directories/files
    *                   for the map-reduce job.
    */
-  public static void setInputPaths(Job job,
-      Path... inputPaths) throws IOException {
+  public static void setInputPaths(Job job, Path... inputPaths) throws IOException {
     Configuration conf = job.getConfiguration();
     Path path = inputPaths[0].getFileSystem(conf).makeQualified(inputPaths[0]);
     StringBuilder str = new StringBuilder(StringUtils.escapeString(path.toString()));

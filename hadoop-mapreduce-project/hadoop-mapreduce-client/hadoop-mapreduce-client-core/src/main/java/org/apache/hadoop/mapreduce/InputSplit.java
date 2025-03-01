@@ -24,18 +24,12 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.classification.InterfaceStability.Evolving;
 import org.apache.hadoop.mapred.SplitLocationInfo;
-import org.apache.hadoop.mapreduce.InputFormat;
-import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.RecordReader;
 
 /**
- * <code>InputSplit</code> represents the data to be processed by an 
- * individual {@link Mapper}. 
- *
- * <p>Typically, it presents a byte-oriented view on the input and is the 
- * responsibility of {@link RecordReader} of the job to process this and present
- * a record-oriented view.
- * 
+ * 这段代码是Hadoop 框架中的InputSplit 抽象类，用于表示输入数据的分片，
+ * 以便在MapReduce 中并行处理。以下是关键部分的解释：
+ * 作用：Input代表输入数据的一个逻辑分片，每一个分片由一个Map任务去处理。
+ * 它提供了分片的大小、存储的位置信息，帮助Hadoop优化任务调度
  * @see InputFormat
  * @see RecordReader
  */
@@ -43,7 +37,7 @@ import org.apache.hadoop.mapreduce.RecordReader;
 @InterfaceStability.Stable
 public abstract class InputSplit {
   /**
-   * Get the size of the split, so that the input splits can be sorted by size.
+   * 返回分片的大小（如字节数），用于排序和资源分配。
    * @return the number of bytes in the split
    * @throws IOException
    * @throws InterruptedException
@@ -51,25 +45,21 @@ public abstract class InputSplit {
   public abstract long getLength() throws IOException, InterruptedException;
 
   /**
-   * Get the list of nodes by name where the data for the split would be local.
-   * The locations do not need to be serialized.
-   * 
+   * 返回存储该分片数据的节点名称（HDFS的DataNode）,利用数据本地减少网络传输
    * @return a new array of the node nodes.
    * @throws IOException
    * @throws InterruptedException
    */
-  public abstract 
-    String[] getLocations() throws IOException, InterruptedException;
+  public abstract String[] getLocations() throws IOException, InterruptedException;
   
   /**
-   * Gets info about which nodes the input split is stored on and how it is
-   * stored at each location.
-   * 
+   * 返回分片存储位置的详细信息（如磁盘或内存），默认返回null表示所有数据在磁盘
    * @return list of <code>SplitLocationInfo</code>s describing how the split
    *    data is stored at each location. A null value indicates that all the
    *    locations have the data stored on disk.
    * @throws IOException
    */
+  //  @Evolving表明该API可能仍在演进中，未来版本可能调整
   @Evolving
   public SplitLocationInfo[] getLocationInfo() throws IOException {
     return null;

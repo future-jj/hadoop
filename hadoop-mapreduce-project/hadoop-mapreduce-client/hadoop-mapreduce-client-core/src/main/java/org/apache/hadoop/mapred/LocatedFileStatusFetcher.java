@@ -71,23 +71,20 @@ import static org.apache.hadoop.fs.statistics.IOStatisticsSupport.snapshotIOStat
 @Private
 public class LocatedFileStatusFetcher implements IOStatisticsSource {
 
-  public static final Logger LOG =
-      LoggerFactory.getLogger(LocatedFileStatusFetcher.class.getName());
+  public static final Logger LOG = LoggerFactory.getLogger(LocatedFileStatusFetcher.class.getName());
   private final Path[] inputDirs;
   private final PathFilter inputFilter;
   private final Configuration conf;
   private final boolean recursive;
   private final boolean newApi;
-  
+
   private final ExecutorService rawExec;
   private final ListeningExecutorService exec;
   private final BlockingQueue<List<FileStatus>> resultQueue;
   private final List<IOException> invalidInputErrors = new LinkedList<>();
 
-  private final ProcessInitialInputPathCallback processInitialInputPathCallback = 
-      new ProcessInitialInputPathCallback();
-  private final ProcessInputDirCallback processInputDirCallback = 
-      new ProcessInputDirCallback();
+  private final ProcessInitialInputPathCallback processInitialInputPathCallback = new ProcessInitialInputPathCallback();
+  private final ProcessInputDirCallback processInputDirCallback = new ProcessInputDirCallback();
 
   private final AtomicInteger runningTasks = new AtomicInteger(0);
 
@@ -106,25 +103,26 @@ public class LocatedFileStatusFetcher implements IOStatisticsSource {
    * Instantiate.
    * The newApi switch is only used to configure what exception is raised
    * on failure of {@link #getFileStatuses()}, it does not change the algorithm.
-   * @param conf configuration for the job
-   * @param dirs the initial list of paths
-   * @param recursive whether to traverse the paths recursively
+   * 
+   * @param conf        configuration for the job
+   * @param dirs        the initial list of paths
+   * @param recursive   whether to traverse the paths recursively
    * @param inputFilter inputFilter to apply to the resulting paths
-   * @param newApi whether using the mapred or mapreduce API
+   * @param newApi      whether using the mapred or mapreduce API
    * @throws InterruptedException
    * @throws IOException
    */
-  public LocatedFileStatusFetcher(Configuration conf, Path[] dirs,
-      boolean recursive, PathFilter inputFilter, boolean newApi)
+  public LocatedFileStatusFetcher(Configuration conf, Path[] dirs, boolean recursive, PathFilter inputFilter,
+      boolean newApi)
       throws InterruptedException, IOException {
     int numThreads = conf.getInt(FileInputFormat.LIST_STATUS_NUM_THREADS,
         FileInputFormat.DEFAULT_LIST_STATUS_NUM_THREADS);
-    LOG.debug("Instantiated LocatedFileStatusFetcher with {} threads",
-        numThreads);
-    rawExec = HadoopExecutors.newFixedThreadPool(
-        numThreads,
-        new ThreadFactoryBuilder().setDaemon(true)
-            .setNameFormat("GetFileInfo #%d").build());
+    LOG.debug("Instantiated LocatedFileStatusFetcher with {} threads", numThreads);
+    rawExec = HadoopExecutors.newFixedThreadPool(numThreads,
+        new ThreadFactoryBuilder()
+            .setDaemon(true)
+            .setNameFormat("GetFileInfo #%d")
+            .build());
     exec = MoreExecutors.listeningDecorator(rawExec);
     resultQueue = new LinkedBlockingQueue<>();
     this.conf = conf;
@@ -136,23 +134,39 @@ public class LocatedFileStatusFetcher implements IOStatisticsSource {
 
   /**
    * Start executing and return FileStatuses based on the parameters specified.
+   * 
    * @return fetched file statuses
-   * @throws InterruptedException interruption waiting for results.
-   * @throws IOException IO failure or other error.
-   * @throws InvalidInputException on an invalid input and the old API
+   * @throws InterruptedException                                        interruption
+   *                                                                     waiting
+   *                                                                     for
+   *                                                                     results.
+   * @throws IOException                                                 IO
+   *                                                                     failure
+   *                                                                     or other
+   *                                                                     error.
+   * @throws InvalidInputException                                       on an
+   *                                                                     invalid
+   *                                                                     input and
+   *                                                                     the old
+   *                                                                     API
    * @throws org.apache.hadoop.mapreduce.lib.input.InvalidInputException on an
-   *         invalid input and the new API.
+   *                                                                     invalid
+   *                                                                     input and
+   *                                                                     the new
+   *                                                                     API.
    */
   public Iterable<FileStatus> getFileStatuses() throws InterruptedException,
       IOException {
-    // Increment to make sure a race between the first thread completing and the
-    // rest being scheduled does not lead to a termination.
+    //  初始值0->1
     runningTasks.incrementAndGet();
     for (Path p : inputDirs) {
       LOG.debug("Queuing scan of directory {}", p);
+      //  每一个目录增加计数器
       runningTasks.incrementAndGet();
+      //  exec 用于并发执行每一个输入路径的扫描任务
       ListenableFuture<ProcessInitialInputPathCallable.Result> future = exec
           .submit(new ProcessInitialInputPathCallable(p, conf, inputFilter));
+      //  processInitialInputPathCallback 回调函数，任务完成时触发
       Futures.addCallback(future, processInitialInputPathCallback,
           MoreExecutors.directExecutor());
     }
@@ -244,6 +258,7 @@ public class LocatedFileStatusFetcher implements IOStatisticsSource {
 
   /**
    * Return any IOStatistics collected during listing.
+   * 
    * @return IO stats accrued.
    */
   @Override
@@ -253,6 +268,7 @@ public class LocatedFileStatusFetcher implements IOStatisticsSource {
 
   /**
    * Add the statistics of an individual thread's scan.
+   * 
    * @param stats possibly null statistics.
    */
   private void addResultStatistics(IOStatistics stats) {
@@ -316,8 +332,8 @@ public class LocatedFileStatusFetcher implements IOStatisticsSource {
               if (recursive && stat.isDirectory()) {
                 result.dirsNeedingRecursiveCalls.add(stat);
               } else {
-                result.locatedFileStatuses.add(org.apache.hadoop.mapreduce.lib.
-                    input.FileInputFormat.shrinkStatus(stat));
+                result.locatedFileStatuses
+                    .add(org.apache.hadoop.mapreduce.lib.input.FileInputFormat.shrinkStatus(stat));
               }
             }
           }
@@ -378,7 +394,6 @@ public class LocatedFileStatusFetcher implements IOStatisticsSource {
       registerError(t);
     }
   }
-
 
   /**
    * Processes an initial Input Path pattern through the globber and PathFilter
