@@ -527,10 +527,8 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
    * @param commaSeparatedPaths Comma separated paths to be set as
    *                            the list of inputs for the map-reduce job.
    */
-  public static void setInputPaths(Job job,
-      String commaSeparatedPaths) throws IOException {
-    setInputPaths(job, StringUtils.stringToPath(
-        getPathStrings(commaSeparatedPaths)));
+  public static void setInputPaths(Job job, String commaSeparatedPaths) throws IOException {
+    setInputPaths(job, StringUtils.stringToPath(getPathStrings(commaSeparatedPaths)));
   }
 
   /**
@@ -548,17 +546,23 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
   }
 
   /**
-   * Set the array of {@link Path}s as the list of inputs
-   * for the map-reduce job.
-   * 
-   * @param job        The job to modify
-   * @param inputPaths the {@link Path}s of the input directories/files
-   *                   for the map-reduce job.
+   * 这段代码是Hadoop中用于设置MapReduce作业输入路径的核心方法，
+   * 其功能是将多个Path对象转换为规范化且转义的字符串，并保存到作业配置中
+   * 将一组 Path 对象转换为标准化的文件系统路径，并进行转义处理，最终以逗号分隔的形式存储到作业配置中。
+   * 确保输入路径的跨节点一致性和特殊字符安全性，避免路径解析错误。
+   * @param job        要配置的MapReduce
+   * @param inputPaths 可变参数，表示输入目录/文件的 Path对象数组
    */
   public static void setInputPaths(Job job, Path... inputPaths) throws IOException {
+    //  通过 Job 对象获取其关联的 Configuration，用于存储输入路径信息。
     Configuration conf = job.getConfiguration();
+    // getFileSystem(conf) 根据配置获取path 对应的文件系统
+    //  makeQualified(inputPaths[0]) 将路径转换为完全限定路径，确保路径包含文件系统信息  
+    // /data/input → hdfs://namenode:8020/data/input。
     Path path = inputPaths[0].getFileSystem(conf).makeQualified(inputPaths[0]);
+    //  转义路径中的特殊字符（如逗号,  转义为 \）避免后续解析错误
     StringBuilder str = new StringBuilder(StringUtils.escapeString(path.toString()));
+    //  遍历剩余路径并拼接
     for (int i = 1; i < inputPaths.length; i++) {
       str.append(StringUtils.COMMA_STR);
       path = inputPaths[i].getFileSystem(conf).makeQualified(inputPaths[i]);
@@ -568,14 +572,12 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
   }
 
   /**
-   * Add a {@link Path} to the list of inputs for the map-reduce job.
-   * 
-   * @param job  The {@link Job} to modify
-   * @param path {@link Path} to be added to the list of inputs for
-   *             the map-reduce job.
+   * addInputPath 方法用于向 MapReduce 作业的输入路径列表中添加单个路径，确保路径格式标准化且安全
+   * 将单个路径添加到作业的输入配置中，支持多次调用以增量构建输入源列表。
+   * @param job  目标作业对象，用于访问和修改配置。
+   * @param path 待添加的输入路径。
    */
-  public static void addInputPath(Job job,
-      Path path) throws IOException {
+  public static void addInputPath(Job job, Path path) throws IOException {
     Configuration conf = job.getConfiguration();
     path = path.getFileSystem(conf).makeQualified(path);
     String dirStr = StringUtils.escapeString(path.toString());
@@ -583,18 +585,29 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
     conf.set(INPUT_DIR, dirs == null ? dirStr : dirs + "," + dirStr);
   }
 
-  // This method escapes commas in the glob pattern of the given paths.
+  /**
+   * 这段代码时Hadoop 中用于解析包含通配符的逗号分割路径字符串的方法
+   * 其核心的功能是正确的分割含通配符的路径，避免将通配符内的逗号误判为路径分隔符
+   * @param commaSeparatedPaths  逗号分隔的路径字符串（""/logs/{2023,2024}/data,/backup"）
+   * @return  输出：分割后的路径数组  ["/logs/{2023,2024}/data", "/backup"]
+   */
   private static String[] getPathStrings(String commaSeparatedPaths) {
     int length = commaSeparatedPaths.length();
+
+    //  跟踪当前大括号{} 的嵌套层数如(如 {{a,b},c}中， 遇到{时递增，}时递减)
     int curlyOpen = 0;
+    //  当前路径的起始字符位置
     int pathStart = 0;
+    //  标记是否处于通配符模式（即是否在{}内）
     boolean globPattern = false;
-    List<String> pathStrings = new ArrayList<String>();
+    //  存储最终分割后的路径
+    List<String> pathStrings = new ArrayList<>();
 
     for (int i = 0; i < length; i++) {
       char ch = commaSeparatedPaths.charAt(i);
       switch (ch) {
         case '{': {
+          //  递增 curlyOpen， 标记进入通配符模式
           curlyOpen++;
           if (!globPattern) {
             globPattern = true;
@@ -602,6 +615,7 @@ public abstract class FileInputFormat<K, V> extends InputFormat<K, V> {
           break;
         }
         case '}': {
+          //  递减 curlyOpen，若归零退出通配符模式
           curlyOpen--;
           if (curlyOpen == 0 && globPattern) {
             globPattern = false;

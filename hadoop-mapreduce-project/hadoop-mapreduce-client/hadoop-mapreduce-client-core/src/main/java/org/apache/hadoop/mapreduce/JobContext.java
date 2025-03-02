@@ -27,64 +27,56 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configuration.IntegerRanges;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.RawComparator;
-import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.security.Credentials;
 
 /**
- * A read-only view of the job that is provided to the tasks while they
- * are running.
+ * 这段代码是Hadoop MapReduce框架中的JobContext接口定义，它为运行中的任务提供了对作业配置和元数据的只读访问。
  */
 @InterfaceAudience.Public
 @InterfaceStability.Evolving
 public interface JobContext extends MRJobConfig {
-  /**
-   * Return the configuration for the job.
-   * @return the shared configuration object
+
+  /** 返回作业的共享配置对象（Configuration），包含用户设置的参数（如输入路径、资源限制等）。
    */
   public Configuration getConfiguration();
 
   /**
-   * Get credentials for the job.
-   * @return credentials for the job
+   * 获取作业的安全凭证（Credentials），用于认证访问HDFS或其他受保护资源。
+   * Kerberos票据或令牌
    */
   public Credentials getCredentials();
 
   /**
-   * Get the unique ID for the job.
-   * @return the object with the job id
+   * 返回作业的唯一标识符（JobID），用于跟踪作业状态。
    */
   public JobID getJobID();
   
   /**
-   * Get configured the number of reduce tasks for this job. Defaults to 
-   * <code>1</code>.
-   * @return the number of reduce tasks for this job.
+   * 获取Reduce任务数量，控制作业并行度。
    */
   public int getNumReduceTasks();
   
   /**
-   * Get the current working directory for the default file system.
+   * 返回作业的HDFS工作目录，用于存储中间数据和结果。
    * 
    * @return the directory name.
    */
   public Path getWorkingDirectory() throws IOException;
 
   /**
-   * Get the key class for the job output data.
+   * 最终输出键的类
    * @return the key class for the job output data.
    */
   public Class<?> getOutputKeyClass();
   
   /**
-   * Get the value class for job outputs.
+   * 最终输出值的类
    * @return the value class for job outputs.
    */
   public Class<?> getOutputValueClass();
 
   /**
-   * Get the key class for the map output data. If it is not set, use the
-   * (final) output key class. This allows the map output key class to be
-   * different than the final output key class.
+   * Map阶段中间输出键的类，可独立于最终输出。
    * @return the map output key class.
    */
   public Class<?> getMapOutputKeyClass();
@@ -107,7 +99,7 @@ public interface JobContext extends MRJobConfig {
   public String getJobName();
 
   /**
-   * Get the {@link InputFormat} class for the job.
+   * 输入格式类（如TextInputFormat），控制输入分片方式。	
    * 
    * @return the {@link InputFormat} class for the job.
    */
@@ -115,7 +107,7 @@ public interface JobContext extends MRJobConfig {
      throws ClassNotFoundException;
 
   /**
-   * Get the {@link Mapper} class for the job.
+   * 获取用户定义的Mapper类，实现map()逻辑。
    * 
    * @return the {@link Mapper} class for the job.
    */
@@ -131,7 +123,7 @@ public interface JobContext extends MRJobConfig {
      throws ClassNotFoundException;
 
   /**
-   * Get the {@link Reducer} class for the job.
+   * 获取用户定义的Reducer类，实现reduce()逻辑。
    * 
    * @return the {@link Reducer} class for the job.
    */
@@ -155,14 +147,14 @@ public interface JobContext extends MRJobConfig {
      throws ClassNotFoundException;
 
   /**
-   * Get the {@link RawComparator} comparator used to compare keys.
+   * 返回键排序的RawComparator，影响Shuffle阶段的排序顺序。
    * 
    * @return the {@link RawComparator} comparator used to compare keys.
    */
   public RawComparator<?> getSortComparator();
 
   /**
-   * Get the pathname of the job's jar.
+   * 获取用户代码的JAR路径，框架将其分发到集群节点。
    * @return the pathname
    */
   public String getJar();
@@ -177,8 +169,7 @@ public interface JobContext extends MRJobConfig {
   public RawComparator<?> getCombinerKeyGroupingComparator();
 
     /**
-     * Get the user defined {@link RawComparator} comparator for
-     * grouping keys of inputs to the reduce.
+     * 定义Reduce阶段的分组逻辑，决定哪些键进入同一reduce()调用。
      *
      * @return comparator set by the user for grouping values.
      * @see Job#setGroupingComparatorClass(Class)
@@ -187,30 +178,27 @@ public interface JobContext extends MRJobConfig {
   public RawComparator<?> getGroupingComparator();
   
   /**
-   * Get whether job-setup and job-cleanup is needed for the job 
+   * 是否执行作业级别的初始化/清理操作。
    * 
    * @return boolean 
    */
   public boolean getJobSetupCleanupNeeded();
   
   /**
-   * Get whether task-cleanup is needed for the job 
+   * 	是否在任务完成后清理临时文件。
    * 
    * @return boolean 
    */
   public boolean getTaskCleanupNeeded();
 
   /**
-   * Get whether the task profiling is enabled.
+   * 	是否启用任务性能分析（如CPU、内存使用）。
    * @return true if some tasks will be profiled
    */
   public boolean getProfileEnabled();
 
   /**
-   * Get the profiler configuration arguments.
-   *
-   * The default value for this property is
-   * "-agentlib:hprof=cpu=samples,heap=sites,force=n,thread=y,verbose=n,file=%s"
+   * 	返回性能分析工具参数（如hprof配置）。
    * 
    * @return the parameters to pass to the task child to configure profiling
    */
@@ -224,7 +212,7 @@ public interface JobContext extends MRJobConfig {
   public IntegerRanges getProfileTaskRange(boolean isMap);
 
   /**
-   * Get the reported username for this job.
+   * 返回提交作业的用户名，用于权限控制和日志记录。
    * 
    * @return the username
    */
@@ -244,15 +232,13 @@ public interface JobContext extends MRJobConfig {
   public Path[] getArchiveClassPaths();
 
   /**
-   * Get cache archives set in the Configuration
-   * @return A URI array of the caches set in the Configuration
+   * 获取需缓存的压缩包URI列表（如JAR、ZIP），自动解压到任务工作目录。
    * @throws IOException
    */
   public URI[] getCacheArchives() throws IOException;
 
   /**
-   * Get cache files set in the Configuration
-   * @return A URI array of the files set in the Configuration
+   * 获取需缓存的文件URI列表，直接本地化到任务节点。
    * @throws IOException
    */
 
@@ -300,18 +286,14 @@ public interface JobContext extends MRJobConfig {
   public String[] getFileTimestamps();
 
   /** 
-   * Get the configured number of maximum attempts that will be made to run a
-   * map task, as specified by the <code>mapred.map.max.attempts</code>
-   * property. If this property is not already set, the default is 4 attempts.
+   * Map任务最大重试次数，提高容错性。
    *  
    * @return the max number of attempts per map task.
    */
   public int getMaxMapAttempts();
 
   /** 
-   * Get the configured number of maximum attempts  that will be made to run a
-   * reduce task, as specified by the <code>mapred.reduce.max.attempts</code>
-   * property. If this property is not already set, the default is 4 attempts.
+   * 	Reduce任务最大重试次数。
    * 
    * @return the max number of attempts per reduce task.
    */

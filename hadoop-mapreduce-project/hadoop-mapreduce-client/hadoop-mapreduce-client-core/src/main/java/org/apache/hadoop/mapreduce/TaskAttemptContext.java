@@ -23,48 +23,43 @@ import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.util.Progressable;
 
 /**
- * The context for task attempts.
+ * 这段代码是 Hadoop 框架中 TaskAttemptContext 接口的定义，用于为 MapReduce 任务的单次尝试（如一个 Map 或 Reduce 任务的一次执行）提供上下文信息
+ * 继承自 JobContext
+ * 提供作业级别的配置信息（如 Configuration 对象）和作业 ID（JobID），允许任务访问全局配置。
+ * 继承自 Progressable
+ * 定义 progress() 方法（未显式写出），用于任务定期报告存活状态，防止被系统误判为超时。
  */
 @InterfaceAudience.Public
 @InterfaceStability.Evolving
 public interface TaskAttemptContext extends JobContext, Progressable {
 
   /**
-   * Get the unique name for this task attempt.
+   * 获取当前任务尝试的唯一标识符。	
    */
   public TaskAttemptID getTaskAttemptID();
 
   /**
-   * Set the current status of the task to the given string.
+   * 	设置任务尝试的当前状态信息。
    */
   public void setStatus(String msg);
 
   /**
-   * Get the last set status message.
-   * @return the current status message
+   * 获取最后一次设置的任务状态信息。
    */
   public String getStatus();
   
   /**
-   * The current progress of the task attempt.
-   * @return a number between 0.0 and 1.0 (inclusive) indicating the attempt's
-   * progress.
+   * 获取任务尝试的进度。
    */
   public abstract float getProgress();
 
   /**
-   * Get the {@link Counter} for the given <code>counterName</code>.
-   * @param counterName counter name
-   * @return the <code>Counter</code> for the given <code>counterName</code>
+   * 通过枚举类型获取计数器实例。
    */
   public Counter getCounter(Enum<?> counterName);
 
   /**
-   * Get the {@link Counter} for the given <code>groupName</code> and 
-   * <code>counterName</code>.
-   * @param counterName counter name
-   * @return the <code>Counter</code> for the given <code>groupName</code> and 
-   *         <code>counterName</code>
+   * 通过组名和计数器名获取自定义计数器实例。
    */
   public Counter getCounter(String groupName, String counterName);
 
